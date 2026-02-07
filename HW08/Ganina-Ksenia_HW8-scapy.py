@@ -1,4 +1,6 @@
 import argparse
+import gzip
+import io
 import socket
 import random
 import time
@@ -91,10 +93,13 @@ def capture_traffic(hostname, timeout=30, output_file=None):
         return None
     
     print(f"Начало перехвата трафика для {hostname} ({dest_ip})...")
+
+    packets = sniff(
+        filter=f"host {dest_ip} and (tcp port 80 or tcp port 443)",
+        timeout=timeout
+    )
     
-    packets = None # TODO настройте перехват трафика
-    
-    # print(f"Перехвачено пакетов: {len(packets)}")
+    print(f"Перехвачено пакетов: {len(packets)}")
     
     if output_file and packets:
         wrpcap(output_file, packets)
@@ -110,24 +115,77 @@ def analyze_packets(packets):
         return
     
     http_data = []
+
     for pkt in packets:
-        if pkt.haslayer('Raw'):
-            try:
-                data = pkt['Raw'].load.decode('utf-8', errors='ignore')
-                if 'HTTP' in data or 'GET' in data or 'POST' in data:
-                    http_data.append(data)
-            except:
-                pass
+        if not (pkt.haslayer("TCP") and pkt.haslayer("IP") and pkt.haslayer("Raw")):
+            continue
+
+        tcp = pkt["TCP"]
+
+        # анализируем только HTTP (порт 80) — и ответы, и запросы
+        if tcp.dport != 80 and tcp.sport != 80:
+            continue
+
+        raw = bytes(pkt['Raw'].load)
+
+        if raw.startswith(b"GET ") or raw.startswith(b"POST ") or raw.startswith(b"HTTP/"):
+            http_data.append(raw)
     
     print(f"Найдено HTTP-сообщений: {len(http_data)}")
-    
-    # Выводим первые несколько HTTP-сообщений
-    for i, data in enumerate(http_data[:3], 1):
+
+    for i, raw in enumerate(http_data[:3], 1):
+        # Заголовки печатаем как текст (без потерь байт)
+        text = raw.decode("iso-8859-1", errors="replace")
+
         print(f"HTTP-сообщение {i} (первые 300 символов)")
-        print(data[:300])
+        print(text[:300])
+
+        # GZIP
+        if raw.startswith(b"HTTP/") and (b"content-encoding: gzip" in raw.lower()):
+            try:
+                if b"\r\n\r\n" in raw:
+                    head_bytes, body_bytes = raw.split(b"\r\n\r\n", 1)
+                else:
+                    head_bytes, body_bytes = raw.split(b"\n\n", 1)
+
+                buf = bytearray(body_bytes)
+
+                # пытаемся дозабрать тело из Raw-пакетов (упрощённо)
+                decompressed = gzip.decompress(bytes(buf))
+
+                print("\nРаспакованное gzip-тело ответа (первые 300 символов):")
+                print(decompressed.decode("utf-8", errors="ignore")[:300])
+
+            except Exception:
+                print("\nНе удалось распаковать gzip-тело ответа (возможна фрагментация по TCP)")
     
     # TODO для этапа 4: добавить анализ на наличие XSS-полезных нагрузок
     # TODO для этапа 4: добавить поиск отраженных XSS в ответах сервера
+    xss_markers = [
+        b"<script",
+        b"</script>",
+        b"alert(",
+        b"onerror=",
+        b"onload="
+    ]
+
+    for data in http_data:
+        lower = data.lower()
+
+        for marker in xss_markers:
+            if marker in lower:
+                print("\nПодозрение на наличие XSS-полезных нагрузок в HTTP-запросе")
+                print(f"Маркер: {marker.decode('ascii', errors='ignore')}")
+                print("Фрагмент запроса:")
+                print(data[:1500].decode("iso-8859-1", errors="replace"))
+
+        if data.startswith(b"HTTP/"):
+            for marker in xss_markers:
+                if marker in lower:
+                    print("\nПодозрение на наличие отраженных XSS в ответах сервера")
+                    print(f"Маркер: {marker.decode('ascii', errors='ignore')}")
+                    print("Фрагмент ответа:")
+                    print(data[:1500].decode("iso-8859-1", errors="replace"))
 
 
 def analyze_saved_traffic(pcap_file):
