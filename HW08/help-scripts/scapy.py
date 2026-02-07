@@ -1,4 +1,6 @@
 import argparse
+import gzip
+import io
 import socket
 import random
 import time
@@ -113,21 +115,49 @@ def analyze_packets(packets):
         return
     
     http_data = []
+
     for pkt in packets:
-        if pkt.haslayer('Raw'):
-            try:
-                data = pkt['Raw'].load.decode('utf-8', errors='ignore')
-                if 'HTTP' in data or 'GET' in data or 'POST' in data:
-                    http_data.append(data)
-            except:
-                pass
+        if not (pkt.haslayer("TCP") and pkt.haslayer("IP") and pkt.haslayer("Raw")):
+            continue
+
+        tcp = pkt["TCP"]
+
+        # анализируем только HTTP (порт 80) — и ответы, и запросы
+        if tcp.dport != 80 and tcp.sport != 80:
+            continue
+
+        raw = bytes(pkt['Raw'].load)
+
+        if raw.startswith(b"GET ") or raw.startswith(b"POST ") or raw.startswith(b"HTTP/"):
+            http_data.append(raw)
     
     print(f"Найдено HTTP-сообщений: {len(http_data)}")
-    
-    # Выводим первые несколько HTTP-сообщений
-    for i, data in enumerate(http_data[:3], 1):
+
+    for i, raw in enumerate(http_data[:3], 1):
+        # Заголовки печатаем как текст (без потерь байт)
+        text = raw.decode("iso-8859-1", errors="replace")
+
         print(f"HTTP-сообщение {i} (первые 300 символов)")
-        print(data[:300])
+        print(text[:300])
+
+        # GZIP
+        if raw.startswith(b"HTTP/") and (b"content-encoding: gzip" in raw.lower()):
+            try:
+                if b"\r\n\r\n" in raw:
+                    head_bytes, body_bytes = raw.split(b"\r\n\r\n", 1)
+                else:
+                    head_bytes, body_bytes = raw.split(b"\n\n", 1)
+
+                buf = bytearray(body_bytes)
+
+                # пытаемся дозабрать тело из Raw-пакетов (упрощённо)
+                decompressed = gzip.decompress(bytes(buf))
+
+                print("\nРаспакованное gzip-тело ответа (первые 300 символов):")
+                print(decompressed.decode("utf-8", errors="ignore")[:300])
+
+            except Exception:
+                print("\nНе удалось распаковать gzip-тело ответа (возможна фрагментация по TCP)")
     
     # TODO для этапа 4: добавить анализ на наличие XSS-полезных нагрузок
     # TODO для этапа 4: добавить поиск отраженных XSS в ответах сервера
