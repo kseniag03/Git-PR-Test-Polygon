@@ -93,7 +93,7 @@ def capture_traffic(hostname, timeout=30, output_file=None):
     print(f"Начало перехвата трафика для {hostname} ({dest_ip})...")
 
     packets = sniff(
-        filter=f"host {dest_ip} and tcp port 80",
+        filter=f"host {dest_ip} and (tcp port 80 or tcp port 443)",
         timeout=timeout
     )
     
