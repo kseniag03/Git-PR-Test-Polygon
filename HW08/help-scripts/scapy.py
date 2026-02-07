@@ -161,6 +161,31 @@ def analyze_packets(packets):
     
     # TODO для этапа 4: добавить анализ на наличие XSS-полезных нагрузок
     # TODO для этапа 4: добавить поиск отраженных XSS в ответах сервера
+    xss_markers = [
+        b"<script",
+        b"</script>",
+        b"alert(",
+        b"onerror=",
+        b"onload="
+    ]
+
+    for data in http_data:
+        lower = data.lower()
+
+        for marker in xss_markers:
+            if marker in lower:
+                print("\nПодозрение на наличие XSS-полезных нагрузок в HTTP-запросе")
+                print(f"Маркер: {marker.decode('ascii', errors='ignore')}")
+                print("Фрагмент запроса:")
+                print(data[:500].decode("iso-8859-1", errors="replace"))
+
+        if data.startswith(b"HTTP/"):
+            for marker in xss_markers:
+                if marker in lower:
+                    print("\nПодозрение на наличие отраженных XSS в ответах сервера")
+                    print(f"Маркер: {marker.decode('ascii', errors='ignore')}")
+                    print("Фрагмент ответа:")
+                    print(data[:500].decode("iso-8859-1", errors="replace"))
 
 
 def analyze_saved_traffic(pcap_file):
