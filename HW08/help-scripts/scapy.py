@@ -91,10 +91,13 @@ def capture_traffic(hostname, timeout=30, output_file=None):
         return None
     
     print(f"Начало перехвата трафика для {hostname} ({dest_ip})...")
+
+    packets = sniff(
+        filter=f"host {dest_ip} and tcp port 80",
+        timeout=timeout
+    )
     
-    packets = None # TODO настройте перехват трафика
-    
-    # print(f"Перехвачено пакетов: {len(packets)}")
+    print(f"Перехвачено пакетов: {len(packets)}")
     
     if output_file and packets:
         wrpcap(output_file, packets)
